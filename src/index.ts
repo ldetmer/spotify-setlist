@@ -51,8 +51,8 @@ import { z } from "zod";
 
 // Spotify API constants
 const SPOTIFY_API_BASE = "https://api.spotify.com/v1";
-const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID || "9c2f1921cfda4f11af5043c03c7e3737";
-const SPOTIFY_CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET || "9ffb2f66eead437b9962c125933695a7";
+const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID || "REPLACE_WITH_YOUR_CLIENT_ID";
+const SPOTIFY_CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET || "REPLACE_WITH_YOUR_CLIENT_SECRET";
 const SPOTIFY_REDIRECT_URI = process.env.SPOTIFY_REDIRECT_URI || "http://127.0.0.1:8080/callback";
 
 let spotifyAccessToken: string | null = null;
@@ -60,7 +60,7 @@ let spotifyRefreshToken: string | null = null;
 let spotifyCodeVerifier: string | null = null;
 
 const SETLISTFM_API_BASE = "https://api.setlist.fm/rest/1.0";
-const SETLISTFM_API_KEY = process.env.SETLISTFM_API_KEY || "ymAsryItcQF4ma4d57bZ9jf2Zf3m-XYaTkPf";
+const SETLISTFM_API_KEY = process.env.SETLISTFM_API_KEY || "REPLACE_WITH_YOUR_SETLISTFM_API_KEY";
 const USER_AGENT = "setlistfm-mcp/1.0";
 
 // Helper for setlist.fm API requests
