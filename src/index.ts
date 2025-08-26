@@ -75,6 +75,20 @@ function generateRandomString(length: number): string {
   return text;
 }
 
+// Helper to generate PKCE code challenge (S256)
+function base64UrlEncode(buffer: Buffer): string {
+  return buffer.toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+}
+
+function generateCodeChallenge(codeVerifier: string): string {
+  const crypto = require('crypto');
+  const hash = crypto.createHash('sha256').update(codeVerifier).digest();
+  return base64UrlEncode(hash);
+}
+
 // ...existing code...
 
 // MCP Server
@@ -232,7 +246,7 @@ server.tool(
   {},
   async () => {
     spotifyCodeVerifier = generateRandomString(64);
-    const codeChallenge = spotifyCodeVerifier; // For demo, use plain (should use base64url(sha256(codeVerifier)))
+    const codeChallenge = generateCodeChallenge(spotifyCodeVerifier);
     const state = generateRandomString(16);
     const scope = [
       "playlist-modify-public",
@@ -244,7 +258,7 @@ server.tool(
       SPOTIFY_CLIENT_ID
     )}&redirect_uri=${encodeURIComponent(
       SPOTIFY_REDIRECT_URI
-    )}&scope=${encodeURIComponent(scope)}&state=${state}&code_challenge_method=plain&code_challenge=${codeChallenge}`;
+    )}&scope=${encodeURIComponent(scope)}&state=${state}&code_challenge_method=S256&code_challenge=${codeChallenge}`;
     return {
       content: [
         { type: "text", text: `Open this URL to authorize Spotify: ${authUrl}` },
