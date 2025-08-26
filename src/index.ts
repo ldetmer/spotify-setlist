@@ -311,6 +311,42 @@ server.tool(
   }
 );
 
+// MCP Tool: Search for songs on Spotify
+server.tool(
+  "spotify-search-track",
+  "Search for songs on Spotify by query string",
+  {
+    query: z.string().describe("Search query for track name, artist, etc."),
+    limit: z.number().min(1).max(50).optional().describe("Max number of tracks to return (default 10)"),
+  },
+  async ({ query, limit }: { query: string; limit?: number }) => {
+    if (!spotifyAccessToken) {
+      return {
+        content: [
+          { type: "text", text: "Spotify access token not set. Authorize first." },
+        ],
+      };
+    }
+    const max = limit || 10;
+    const result = await spotifyRequest<any>(`/search?type=track&q=${encodeURIComponent(query)}&limit=${max}`);
+    if (!result || !result.tracks || !result.tracks.items) {
+      return {
+        content: [
+          { type: "text", text: "No tracks found." },
+        ],
+      };
+    }
+    // Return basic info for each track as formatted text
+    const tracks = result.tracks.items.map((track: any) =>
+      `Track: ${track.name}\nArtist(s): ${track.artists.map((a: any) => a.name).join(", ")}\nAlbum: ${track.album.name}\nURI: ${track.uri}\nID: ${track.id}\n---`
+    ).join("\n");
+    return {
+      content: [
+        { type: "text", text: tracks },
+      ],
+    };
+  }
+);
 
 // Start the server
 async function main() {
