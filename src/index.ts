@@ -6,8 +6,8 @@ import { z } from "zod";
 
 // Spotify API constants
 const SPOTIFY_API_BASE = "https://api.spotify.com/v1";
-const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID || "";
-const SPOTIFY_CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET || "";
+const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID || "9c2f1921cfda4f11af5043c03c7e3737";
+const SPOTIFY_CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET || "9ffb2f66eead437b9962c125933695a7";
 const SPOTIFY_REDIRECT_URI = process.env.SPOTIFY_REDIRECT_URI || "http://localhost:8888/callback";
 
 let spotifyAccessToken: string | null = null;
@@ -223,6 +223,36 @@ server.tool(
     };
   }
 );
+
+// MCP Tool: Get Spotify authorization URL
+// MCP Tool: Get Spotify authorization URL
+server.tool(
+  "spotify-get-auth-url",
+  "Get Spotify authorization URL for OAuth",
+  {},
+  async () => {
+    spotifyCodeVerifier = generateRandomString(64);
+    const codeChallenge = spotifyCodeVerifier; // For demo, use plain (should use base64url(sha256(codeVerifier)))
+    const state = generateRandomString(16);
+    const scope = [
+      "playlist-modify-public",
+      "playlist-modify-private",
+      "user-read-private",
+      "user-read-email",
+    ].join(" ");
+    const authUrl = `https://accounts.spotify.com/authorize?response_type=code&client_id=${encodeURIComponent(
+      SPOTIFY_CLIENT_ID
+    )}&redirect_uri=${encodeURIComponent(
+      SPOTIFY_REDIRECT_URI
+    )}&scope=${encodeURIComponent(scope)}&state=${state}&code_challenge_method=plain&code_challenge=${codeChallenge}`;
+    return {
+      content: [
+        { type: "text", text: `Open this URL to authorize Spotify: ${authUrl}` },
+      ],
+    };
+  }
+);
+
 
 // Start the server
 async function main() {
