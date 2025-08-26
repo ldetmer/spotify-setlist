@@ -1,3 +1,16 @@
+// Load environment variables from .env file
+import dotenv from "dotenv";
+dotenv.config();
+
+// Helper to require env vars
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`Missing required environment variable: ${name}`);
+  }
+  return value;
+}
+
 // Add Express server to handle Spotify OAuth redirect
 import express from "express";
 
@@ -12,14 +25,13 @@ app.get("/callback", async (req, res) => {
     res.status(400).send("No code verifier found. Start auth flow first.");
     return;
   }
-  const params = new URLSearchParams({
-    grant_type: "authorization_code",
-    code,
-    redirect_uri: SPOTIFY_REDIRECT_URI,
-    client_id: SPOTIFY_CLIENT_ID,
-    code_verifier: spotifyCodeVerifier,
-    client_secret: SPOTIFY_CLIENT_SECRET,
-  });
+  const params = new URLSearchParams();
+  params.append("grant_type", "authorization_code");
+  params.append("code", code);
+  params.append("redirect_uri", SPOTIFY_REDIRECT_URI);
+  params.append("client_id", SPOTIFY_CLIENT_ID);
+  params.append("code_verifier", spotifyCodeVerifier);
+  params.append("client_secret", SPOTIFY_CLIENT_SECRET);
   try {
     const resp = await fetch("https://accounts.spotify.com/api/token", {
       method: "POST",
@@ -51,16 +63,16 @@ import { z } from "zod";
 
 // Spotify API constants
 const SPOTIFY_API_BASE = "https://api.spotify.com/v1";
-const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID || "REPLACE_WITH_YOUR_CLIENT_ID";
-const SPOTIFY_CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET || "REPLACE_WITH_YOUR_CLIENT_SECRET";
-const SPOTIFY_REDIRECT_URI = process.env.SPOTIFY_REDIRECT_URI || "http://127.0.0.1:8080/callback";
+const SPOTIFY_CLIENT_ID = requireEnv("SPOTIFY_CLIENT_ID");
+const SPOTIFY_CLIENT_SECRET = requireEnv("SPOTIFY_CLIENT_SECRET");
+const SPOTIFY_REDIRECT_URI = requireEnv("SPOTIFY_REDIRECT_URI");
 
 let spotifyAccessToken: string | null = null;
 let spotifyRefreshToken: string | null = null;
 let spotifyCodeVerifier: string | null = null;
 
 const SETLISTFM_API_BASE = "https://api.setlist.fm/rest/1.0";
-const SETLISTFM_API_KEY = process.env.SETLISTFM_API_KEY || "REPLACE_WITH_YOUR_SETLISTFM_API_KEY";
+const SETLISTFM_API_KEY = requireEnv("SETLISTFM_API_KEY");
 const USER_AGENT = "setlistfm-mcp/1.0";
 
 // Helper for setlist.fm API requests
@@ -70,7 +82,7 @@ async function setlistfmRequest<T>(endpoint: string, params?: Record<string, str
     const search = new URLSearchParams(params).toString();
     url += `?${search}`;
   }
-  const headers = {
+  const headers: Record<string, string> = {
     "x-api-key": SETLISTFM_API_KEY,
     "Accept": "application/json",
     "User-Agent": USER_AGENT,
@@ -133,8 +145,6 @@ function generateCodeChallenge(codeVerifier: string): string {
   const hash = crypto.createHash('sha256').update(codeVerifier).digest();
   return base64UrlEncode(hash);
 }
-
-// ...existing code...
 
 // MCP Server
 const server = new McpServer({

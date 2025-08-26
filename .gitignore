@@ -1,5 +1,3 @@
-# Ignore build output
 build/
-
-# Ignore node modules
 node_modules/
+.env
