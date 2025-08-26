@@ -1,3 +1,48 @@
+// Add Express server to handle Spotify OAuth redirect
+import express from "express";
+
+const app = express();
+app.get("/callback", async (req, res) => {
+  const code = req.query.code as string | undefined;
+  if (!code) {
+    res.status(400).send("Missing code parameter");
+    return;
+  }
+  if (!spotifyCodeVerifier) {
+    res.status(400).send("No code verifier found. Start auth flow first.");
+    return;
+  }
+  const params = new URLSearchParams({
+    grant_type: "authorization_code",
+    code,
+    redirect_uri: SPOTIFY_REDIRECT_URI,
+    client_id: SPOTIFY_CLIENT_ID,
+    code_verifier: spotifyCodeVerifier,
+    client_secret: SPOTIFY_CLIENT_SECRET,
+  });
+  try {
+    const resp = await fetch("https://accounts.spotify.com/api/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params.toString(),
+    });
+    if (!resp.ok) {
+      res.status(500).send(`Failed to get token: ${resp.status}`);
+      return;
+    }
+    const data = await resp.json() as { access_token: string; refresh_token?: string };
+    spotifyAccessToken = data.access_token;
+    spotifyRefreshToken = data.refresh_token || null;
+    res.send("Spotify authentication successful! You can close this window.");
+    console.log("Spotify access token stored in memory.");
+  } catch (err) {
+    res.status(500).send("Error exchanging code for token");
+  }
+});
+
+app.listen(8080, () => {
+  console.log("Express server listening on http://127.0.0.1:8080/callback");
+});
 // --- SETLIST.FM & SPOTIFY MCP SERVER ---
 import fetch from "node-fetch";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -8,7 +53,7 @@ import { z } from "zod";
 const SPOTIFY_API_BASE = "https://api.spotify.com/v1";
 const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID || "9c2f1921cfda4f11af5043c03c7e3737";
 const SPOTIFY_CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET || "9ffb2f66eead437b9962c125933695a7";
-const SPOTIFY_REDIRECT_URI = process.env.SPOTIFY_REDIRECT_URI || "http://localhost:8888/callback";
+const SPOTIFY_REDIRECT_URI = process.env.SPOTIFY_REDIRECT_URI || "http://127.0.0.1:8080/callback";
 
 let spotifyAccessToken: string | null = null;
 let spotifyRefreshToken: string | null = null;
@@ -76,6 +121,7 @@ function generateRandomString(length: number): string {
 }
 
 // Helper to generate PKCE code challenge (S256)
+import * as crypto from 'crypto';
 function base64UrlEncode(buffer: Buffer): string {
   return buffer.toString('base64')
     .replace(/\+/g, '-')
@@ -84,7 +130,6 @@ function base64UrlEncode(buffer: Buffer): string {
 }
 
 function generateCodeChallenge(codeVerifier: string): string {
-  const crypto = require('crypto');
   const hash = crypto.createHash('sha256').update(codeVerifier).digest();
   return base64UrlEncode(hash);
 }
@@ -238,7 +283,6 @@ server.tool(
   }
 );
 
-// MCP Tool: Get Spotify authorization URL
 // MCP Tool: Get Spotify authorization URL
 server.tool(
   "spotify-get-auth-url",
