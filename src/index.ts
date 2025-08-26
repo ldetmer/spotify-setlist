@@ -348,6 +348,52 @@ server.tool(
   }
 );
 
+// MCP Tool: Search for playlists on Spotify
+server.tool(
+  "spotify-search-playlist",
+  "Search for playlists on Spotify by query string",
+  {
+    query: z.string().describe("Search query for playlist name, etc."),
+    limit: z.number().min(1).max(50).optional().describe("Max number of playlists to return (default 10)"),
+  },
+  async ({ query, limit }: { query: string; limit?: number }) => {
+    if (!spotifyAccessToken) {
+      return {
+        content: [
+          { type: "text", text: "Spotify access token not set. Authorize first." },
+        ],
+      };
+    }
+    const max = limit || 10;
+    const result = await spotifyRequest<any>(`/search?type=playlist&q=${encodeURIComponent(query)}&limit=${max}`);
+    if (!result || !result.playlists || !result.playlists.items) {
+      return {
+        content: [
+          { type: "text", text: "No playlists found." },
+        ],
+      };
+    }
+    // Return basic info for each playlist as formatted text, handling nulls
+    const playlists = result.playlists.items
+      .filter((pl: any) => pl && pl.name && pl.owner && pl.tracks)
+      .map((pl: any) =>
+        `Playlist: ${pl.name}\nOwner: ${pl.owner.display_name || pl.owner.id || "Unknown"}\nTracks: ${pl.tracks.total ?? "Unknown"}\nURI: ${pl.uri ?? "Unknown"}\nID: ${pl.id ?? "Unknown"}\n---`
+      ).join("\n");
+    if (!playlists) {
+      return {
+        content: [
+          { type: "text", text: "No valid playlists found." },
+        ],
+      };
+    }
+    return {
+      content: [
+        { type: "text", text: playlists },
+      ],
+    };
+  }
+);
+
 // Start the server
 async function main() {
   const transport = new StdioServerTransport();
