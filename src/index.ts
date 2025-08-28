@@ -11,400 +11,43 @@ function requireEnv(name: string): string {
   return value;
 }
 
-// Add Express server to handle Spotify OAuth redirect
-import express from "express";
 
-const app = express();
-app.get("/callback", async (req, res) => {
-  const code = req.query.code as string | undefined;
-  if (!code) {
-    res.status(400).send("Missing code parameter");
-    return;
-  }
-  if (!spotifyCodeVerifier) {
-    res.status(400).send("No code verifier found. Start auth flow first.");
-    return;
-  }
-  const params = new URLSearchParams();
-  params.append("grant_type", "authorization_code");
-  params.append("code", code);
-  params.append("redirect_uri", SPOTIFY_REDIRECT_URI);
-  params.append("client_id", SPOTIFY_CLIENT_ID);
-  params.append("code_verifier", spotifyCodeVerifier);
-  params.append("client_secret", SPOTIFY_CLIENT_SECRET);
-  try {
-    const resp = await fetch("https://accounts.spotify.com/api/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: params.toString(),
-    });
-    if (!resp.ok) {
-      res.status(500).send(`Failed to get token: ${resp.status}`);
-      return;
-    }
-    const data = await resp.json() as { access_token: string; refresh_token?: string };
-    spotifyAccessToken = data.access_token;
-    spotifyRefreshToken = data.refresh_token || null;
-    res.send("Spotify authentication successful! You can close this window.");
-    console.log("Spotify access token stored in memory.");
-  } catch (err) {
-    res.status(500).send("Error exchanging code for token");
-  }
-});
-
-app.listen(8080, () => {
-  console.log("Express server listening on http://127.0.0.1:8080/callback");
-});
-// --- SETLIST.FM & SPOTIFY MCP SERVER ---
-import fetch from "node-fetch";
+// --- MCP SERVER SETUP ---
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { z } from "zod";
+import { registerSpotifyTools } from "./mcp-spotify.js";
+import { registerSetlistfmTools } from "./mcp-setlist.js";
+import { spawn } from "child_process";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Spotify API constants
-const SPOTIFY_API_BASE = "https://api.spotify.com/v1";
-const SPOTIFY_CLIENT_ID = requireEnv("SPOTIFY_CLIENT_ID");
-const SPOTIFY_CLIENT_SECRET = requireEnv("SPOTIFY_CLIENT_SECRET");
-const SPOTIFY_REDIRECT_URI = requireEnv("SPOTIFY_REDIRECT_URI");
+// Start the Spotify auth server as a child process
+const authServer = spawn("node", [path.resolve(__dirname, "spotify-auth-server.js")], {
+  stdio: "inherit"
+});
 
-let spotifyAccessToken: string | null = null;
-let spotifyRefreshToken: string | null = null;
-let spotifyCodeVerifier: string | null = null;
-
-const SETLISTFM_API_BASE = "https://api.setlist.fm/rest/1.0";
-const SETLISTFM_API_KEY = requireEnv("SETLISTFM_API_KEY");
-const USER_AGENT = "setlistfm-mcp/1.0";
-
-// Helper for setlist.fm API requests
-async function setlistfmRequest<T>(endpoint: string, params?: Record<string, string>): Promise<T | null> {
-  let url = `${SETLISTFM_API_BASE}${endpoint}`;
-  if (params) {
-    const search = new URLSearchParams(params).toString();
-    url += `?${search}`;
-  }
-  const headers: Record<string, string> = {
-    "x-api-key": SETLISTFM_API_KEY,
-    "Accept": "application/json",
-    "User-Agent": USER_AGENT,
-  };
+// Helper to read the access token from file
+function getSpotifyAccessToken(): string | null {
   try {
-    const response = await fetch(url, { headers });
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-    return (await response.json()) as T;
-  } catch (error) {
-    console.error("Error making setlist.fm request:", error);
+    const tokenPath = path.resolve(process.cwd(), ".spotify-token.json");
+    if (!fs.existsSync(tokenPath)) return null;
+    const data = JSON.parse(fs.readFileSync(tokenPath, "utf8"));
+    return data.access_token || null;
+  } catch {
     return null;
   }
 }
 
-// Helper for Spotify API requests
-async function spotifyRequest<T>(endpoint: string, method: string = "GET", body?: any): Promise<T | null> {
-  const url = `${SPOTIFY_API_BASE}${endpoint}`;
-  const headers: Record<string, string> = {
-    "Authorization": `Bearer ${spotifyAccessToken}`,
-    "Content-Type": "application/json",
-  };
-  try {
-    const response = await fetch(url, {
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-    return (await response.json()) as T;
-  } catch (error) {
-    console.error("Error making Spotify request:", error);
-    return null;
-  }
-}
-
-// Helper to generate random string for PKCE
-function generateRandomString(length: number): string {
-  const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let text = '';
-  for (let i = 0; i < length; i++) {
-    text += possible.charAt(Math.floor(Math.random() * possible.length));
-  }
-  return text;
-}
-
-// Helper to generate PKCE code challenge (S256)
-import * as crypto from 'crypto';
-function base64UrlEncode(buffer: Buffer): string {
-  return buffer.toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '');
-}
-
-function generateCodeChallenge(codeVerifier: string): string {
-  const hash = crypto.createHash('sha256').update(codeVerifier).digest();
-  return base64UrlEncode(hash);
-}
-
-// MCP Server
 const server = new McpServer({
   name: "setlistfm",
   version: "1.0.0",
 });
 
-// Tool: Search for artist by name
-server.tool(
-  "search-artist",
-  "Search for artists by name",
-  {
-    name: z.string().describe("Artist name to search for"),
-  },
-  async ({ name }: { name: string }) => {
-    const data = await setlistfmRequest<any>("/search/artists", { artistName: name });
-    if (!data || !data.artist) {
-      return {
-        content: [
-          { type: "text", text: `No artists found for '${name}'.` },
-        ],
-      };
-    }
-    const artists = Array.isArray(data.artist) ? data.artist : [data.artist];
-    const results = artists.map((a: any) => `${a.name} (mbid: ${a.mbid || "N/A"})`).join("\n");
-    return {
-      content: [
-        { type: "text", text: `Artists found:\n${results}` },
-      ],
-    };
-  }
-);
+registerSetlistfmTools(server);
+registerSpotifyTools(server);
 
-// Tool: Get recent setlists for artist
-server.tool(
-  "get-recent-setlists",
-  "Get recent setlists for an artist",
-  {
-    mbid: z.string().describe("MusicBrainz ID (mbid) of the artist"),
-    limit: z.number().min(1).max(10).optional().describe("Max number of setlists to return (default 5)"),
-  },
-  async ({ mbid, limit }: { mbid: string; limit?: number }) => {
-    const data = await setlistfmRequest<any>(`/artist/${mbid}/setlists`);
-    if (!data || !data.setlist) {
-      return {
-        content: [
-          { type: "text", text: `No setlists found for artist mbid '${mbid}'.` },
-        ],
-      };
-    }
-    const setlists = Array.isArray(data.setlist) ? data.setlist : [data.setlist];
-    const max = limit || 5;
-    const recent = setlists.slice(0, max);
-    const formatted = recent.map((s: any) => {
-      const eventDate = s.eventDate || "";
-      const venue = s.venue?.name || "";
-      const city = s.venue?.city?.name || "";
-      const country = s.venue?.city?.country?.name || "";
-      const songs = (s.sets?.set || []).flatMap((set: any) => (set.song || []).map((song: any) => song.name)).join(", ");
-      return `Date: ${eventDate}\nVenue: ${venue}, ${city}, ${country}\nSongs: ${songs}`;
-    }).join("\n---\n");
-    return {
-      content: [
-        { type: "text", text: `Recent setlists for artist mbid ${mbid}:\n${formatted}` },
-      ],
-    };
-  }
-);
-
-// MCP Tool: Create Spotify playlist
-server.tool(
-  "spotify-create-playlist",
-  "Create a new Spotify playlist for the authenticated user",
-  {
-    name: z.string().describe("Playlist name"),
-    description: z.string().optional().describe("Playlist description"),
-    public: z.boolean().optional().describe("Is playlist public?"),
-  },
-  async ({ name, description, public: isPublic }: { name: string; description?: string; public?: boolean }) => {
-  if (!spotifyAccessToken) {
-      return {
-        content: [
-          { type: "text", text: "Spotify access token not set." },
-        ],
-      };
-    }
-    // Get user profile
-    const user = await spotifyRequest<any>("/me");
-    if (!user || !user.id) {
-      return {
-        content: [
-          { type: "text", text: "Failed to get Spotify user profile." },
-        ],
-      };
-    }
-    // Create playlist
-    const playlist = await spotifyRequest<any>(`/users/${user.id}/playlists`, "POST", {
-      name,
-      description: description || "",
-      public: isPublic ?? true,
-    });
-    if (!playlist || !playlist.id) {
-      return {
-        content: [
-          { type: "text", text: "Failed to create playlist." },
-        ],
-      };
-    }
-    return {
-      content: [
-        { type: "text", text: `Playlist created: ${playlist.name} (${playlist.id})` },
-      ],
-    };
-  }
-);
-
-// MCP Tool: Add songs to Spotify playlist
-server.tool(
-  "spotify-add-songs",
-  "Add songs to a Spotify playlist",
-  {
-    playlistId: z.string().describe("Spotify playlist ID"),
-    uris: z.array(z.string()).describe("Array of Spotify track URIs (e.g. spotify:track:xxxx)"),
-  },
-  async ({ playlistId, uris }: { playlistId: string; uris: string[] }) => {
-  if (!spotifyAccessToken) {
-      return {
-        content: [
-          { type: "text", text: "Spotify access token not set." },
-        ],
-      };
-    }
-    const result = await spotifyRequest<any>(`/playlists/${playlistId}/tracks`, "POST", { uris });
-    if (!result || !result.snapshot_id) {
-      return {
-        content: [
-          { type: "text", text: "Failed to add songs to playlist." },
-        ],
-      };
-    }
-    return {
-      content: [
-        { type: "text", text: `Added ${uris.length} songs to playlist ${playlistId}` },
-      ],
-    };
-  }
-);
-
-// MCP Tool: Get Spotify authorization URL
-server.tool(
-  "spotify-get-auth-url",
-  "Get Spotify authorization URL for OAuth",
-  {},
-  async () => {
-    spotifyCodeVerifier = generateRandomString(64);
-    const codeChallenge = generateCodeChallenge(spotifyCodeVerifier);
-    const state = generateRandomString(16);
-    const scope = [
-      "playlist-modify-public",
-      "playlist-modify-private",
-      "user-read-private",
-      "user-read-email",
-    ].join(" ");
-    const authUrl = `https://accounts.spotify.com/authorize?response_type=code&client_id=${encodeURIComponent(
-      SPOTIFY_CLIENT_ID
-    )}&redirect_uri=${encodeURIComponent(
-      SPOTIFY_REDIRECT_URI
-    )}&scope=${encodeURIComponent(scope)}&state=${state}&code_challenge_method=S256&code_challenge=${codeChallenge}`;
-    return {
-      content: [
-        { type: "text", text: `Open this URL to authorize Spotify: ${authUrl}` },
-      ],
-    };
-  }
-);
-
-// MCP Tool: Search for songs on Spotify
-server.tool(
-  "spotify-search-track",
-  "Search for songs on Spotify by query string",
-  {
-    query: z.string().describe("Search query for track name, artist, etc."),
-    limit: z.number().min(1).max(50).optional().describe("Max number of tracks to return (default 10)"),
-  },
-  async ({ query, limit }: { query: string; limit?: number }) => {
-    if (!spotifyAccessToken) {
-      return {
-        content: [
-          { type: "text", text: "Spotify access token not set. Authorize first." },
-        ],
-      };
-    }
-    const max = limit || 10;
-    const result = await spotifyRequest<any>(`/search?type=track&q=${encodeURIComponent(query)}&limit=${max}`);
-    if (!result || !result.tracks || !result.tracks.items) {
-      return {
-        content: [
-          { type: "text", text: "No tracks found." },
-        ],
-      };
-    }
-    // Return basic info for each track as formatted text
-    const tracks = result.tracks.items.map((track: any) =>
-      `Track: ${track.name}\nArtist(s): ${track.artists.map((a: any) => a.name).join(", ")}\nAlbum: ${track.album.name}\nURI: ${track.uri}\nID: ${track.id}\n---`
-    ).join("\n");
-    return {
-      content: [
-        { type: "text", text: tracks },
-      ],
-    };
-  }
-);
-
-// MCP Tool: Search for playlists on Spotify
-server.tool(
-  "spotify-search-playlist",
-  "Search for playlists on Spotify by query string",
-  {
-    query: z.string().describe("Search query for playlist name, etc."),
-    limit: z.number().min(1).max(50).optional().describe("Max number of playlists to return (default 10)"),
-  },
-  async ({ query, limit }: { query: string; limit?: number }) => {
-    if (!spotifyAccessToken) {
-      return {
-        content: [
-          { type: "text", text: "Spotify access token not set. Authorize first." },
-        ],
-      };
-    }
-    const max = limit || 10;
-    const result = await spotifyRequest<any>(`/search?type=playlist&q=${encodeURIComponent(query)}&limit=${max}`);
-    if (!result || !result.playlists || !result.playlists.items) {
-      return {
-        content: [
-          { type: "text", text: "No playlists found." },
-        ],
-      };
-    }
-    // Return basic info for each playlist as formatted text, handling nulls
-    const playlists = result.playlists.items
-      .filter((pl: any) => pl && pl.name && pl.owner && pl.tracks)
-      .map((pl: any) =>
-        `Playlist: ${pl.name}\nOwner: ${pl.owner.display_name || pl.owner.id || "Unknown"}\nTracks: ${pl.tracks.total ?? "Unknown"}\nURI: ${pl.uri ?? "Unknown"}\nID: ${pl.id ?? "Unknown"}\n---`
-      ).join("\n");
-    if (!playlists) {
-      return {
-        content: [
-          { type: "text", text: "No valid playlists found." },
-        ],
-      };
-    }
-    return {
-      content: [
-        { type: "text", text: playlists },
-      ],
-    };
-  }
-);
-
-// Start the server
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
@@ -415,3 +58,4 @@ main().catch((error) => {
   console.error("Fatal error in main():", error);
   process.exit(1);
 });
+
